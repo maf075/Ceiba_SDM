@@ -1,0 +1,78 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+```{r}
+install.packages("rgbif")
+install.packages(c('raster', 'rgdal', 'dismo', 'rJava', 'maptools'))
+```
+
+```{r}
+library(dismo)
+library(rgbif)
+library(maptools)
+```
+```{r}
+ceiba_points <- occ_search(scientificName = "Ceiba pentandra", 
+                          country = 'MX', fields=c('name','country','countryCode','stateProvince','year','decimalLatitude','decimalLongitude'), limit = 1000)
+ceiba_points <- ceiba_points$data
+```
+```{r}
+data("wrld_simpl")
+xlim <- c(-129,-79)
+ylim <- c(15,35)
+plot(wrld_simpl,xlim=xlim,ylim=ylim) # make a zoomed-in map of mexico
+points(ceiba_points$decimalLongitude,ceiba_points$decimalLatitude, col='green')
+```
+```{r}
+path <- file.path(system.file(package="dismo"), 'ex')
+files <- list.files(path, pattern='grd$', full.names=TRUE )
+files
+predictors <- stack(files)
+predictors
+
+extent_of_mexico_map <- extent(-129, -79, -15, 35) # Set your extent to the area we're focused on
+predictors_cropped_to_mexico <- crop(predictors, extent_of_mexico_map)
+predictors_cropped_to_mexico
+```
+```{r}
+set.seed(0)
+group <- kfold(ceiba_points, 5)
+pres_train_ceiba <- ceiba_points[group != 1, ]
+pres_train_ceiba <- as.data.frame(pres_train_ceiba[,1:2])
+
+pres_test_ceiba <- ceiba_points[group == 1, ]
+pres_test_ceiba <- as.data.frame(pres_test_ceiba[,1:2])
+
+```
+```{r}
+pred_nf <- dropLayer(predictors_cropped_to_mexico, 'biome')
+backg <- randomPoints(pred_nf, n=1000, ext=extent_of_mexico_map, extf = 1.25)
+colnames(backg) = c('lon', 'lat')
+group <- kfold(backg, 5)
+backg_train <- backg[group != 1, ]
+backg_test <- backg[group == 1, ]
+```
+```{r}
+jar <- paste(system.file(package="dismo"), "/java/maxent.jar", sep='')
+xm <- maxent(predictors_cropped_to_mexico, pres_train_ceiba, factors='biome')
+plot(xm)
+```
+```{r}
+e <- evaluate(pres_test_ceiba, backg_test, xm, predictors_cropped_to_mexico)
+e
+px <- predict(predictors_cropped_to_mexico, xm, ext=extent_of_mexico_map, progress='')
+par(mfrow=c(1,2))
+plot(px, main='Maxent, raw values')
+plot(wrld_simpl, add=TRUE, border='dark grey')
+tr <- threshold(e, 'spec_sens')
+plot(px > tr, main='presence/absence')
+plot(wrld_simpl, add=TRUE, border='dark grey')
+points(pres_train_ceiba, pch='*')
+```
